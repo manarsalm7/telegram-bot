@@ -1,0 +1,8 @@
+ccxt
+python-telegram-bot
+google-genai
+feedparser
+pandas
+numpy
+arabic-reshaper
+python-bidi
