@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import ccxt
 from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
@@ -18,9 +19,10 @@ CONFIG = {
         "https://cointelegraph.com/rss",
         "https://www.coindesk.com/arc/outboundfeeds/rss/"
     ],
+    # الاستفادة من أقوى النماذج المتاحة في حساب الـ Pro
     "fallback_models": [
-        "gemini-2.5-flash",
-        "gemini-1.5-flash"
+        "gemini-2.5-pro",
+        "gemini-2.5-flash"
     ]
 }
 
@@ -107,12 +109,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user_question = message.text or message.caption or "تحليل هذه الصورة"
     
-    await message.reply_text("⏳ جاري استلام الصورة وتحليل السوق والأخبار...")
+    await message.reply_text("⏳ جاري استلام الطلب وتحليله عبر نماذج Pro المتقدمة...")
 
-    # التحقق مما إذا كان المستخدم أرسل صورة
     image_bytes = None
     if message.photo:
-        # جلب أعلى دقة للصورة المرفقة
         photo_file = await message.photo[-1].get_file()
         image_bytes = await photo_file.download_as_bytearray()
 
@@ -130,7 +130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     prompt = f"""
-أنت مستشار تداول كمي وخبير كريبتو ذكي وودود تسولف مع صديقك وتتناقش معه بحرية تامة.
+أنت مستشار تداول كمي وخبير كريبتو محترف وذكي.
 هذه هي بيانات السوق الحية الآن من باينانس:
 {market_overview}
 {specific_data}
@@ -138,19 +138,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 وهذه أحدث عناوين الأخبار المالية:
 {headlines}
 
-سؤال أو ملاحظة المستخدم مع الصورة: "{user_question}"
+سؤال أو ملاحظة المستخدم: "{user_question}"
 
 تعليمات الرد:
-1. إذا أرسل المستخدم صورة (مثل شارت تحليل فني، أو محفظة، أو صفقة)، قم بتحليل ما بداخل الصورة بدقة واربطه ببيانات السوق الحية.
-2. اسولف معه بطريقة طبيعية، ذكية، ومريحة وخالية من الجمود.
-3. أعطه نصائح عملية واضحة (نقاط الدخول، الأهداف، وقف الخسارة).
-4. أجب باللغة العربية.
+1. استغل قدرات التحليل العميق المتاحة لتقديم قراءة تحليلية دقيقة واحترافية.
+2. إذا أرسل المستخدم شارت أو صورة، قم بتحليل تفاصيلها بدقة متناهية.
+3. قدم توصيات عملية واضحة (نقاط الدخول، الأهداف، وقف الخسارة) مع شرح الأسباب بالأرقام.
+4. أجب باللغة العربية بطريقة احترافية وودود.
 """
 
     response = None
     contents = [prompt]
     
-    # إذا كانت هناك صورة، نقوم بإضافتها مع الطلب للنموذج
     if image_bytes:
         contents.append(
             types.Part.from_bytes(
@@ -184,10 +183,9 @@ def main():
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = ApplicationBuilder().token(CONFIG["telegram_token"]).request(request).build()
     
-    # تعديل الـ Filter لكي يستقبل النصوص والصور معاً
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), handle_message))
     
-    print("🤖 بوت تيليجرام (النصوص والصور) يعمل الآن بنجاح...")
+    print("🤖 بوت تيليجرام (مدعوم بنماذج Pro وتحليل الصور) يعمل الآن بنجاح...")
     app.run_polling()
 
 
