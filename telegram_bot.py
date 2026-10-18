@@ -1,5 +1,6 @@
 import re
 import os
+import io
 import feedparser
 import pandas as pd
 import numpy as np
@@ -10,7 +11,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filte
 from telegram.request import HTTPXRequest
 
 CONFIG = {
-    # يتم سحب المفاتيح أماناً من إعدادات السيرفر أو البيئة
     "telegram_token": os.environ.get("TELEGRAM_TOKEN"),
     "gemini_api_key": os.environ.get("GEMINI_API_KEY"),
     "timeframe": "1h",
@@ -19,7 +19,6 @@ CONFIG = {
         "https://www.coindesk.com/arc/outboundfeeds/rss/"
     ],
     "fallback_models": [
-        "gemini-3.8-flash",
         "gemini-2.5-flash",
         "gemini-1.5-flash"
     ]
@@ -84,6 +83,8 @@ client = genai.Client(api_key=CONFIG["gemini_api_key"]) if CONFIG["gemini_api_ke
 
 
 def extract_symbol(user_text: str) -> str:
+    if not user_text:
+        return ""
     text_low = user_text.lower()
     coin_pairs = [
         ("doge", "DOGE/USDT"), ("دوج", "DOGE/USDT"),
@@ -103,8 +104,17 @@ def extract_symbol(user_text: str) -> str:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_question = update.message.text
-    await update.message.reply_text("⏳ جاري قراءة السوق والأخبار والتفكير في رد مناسب...")
+    message = update.message
+    user_question = message.text or message.caption or "تحليل هذه الصورة"
+    
+    await message.reply_text("⏳ جاري استلام الصورة وتحليل السوق والأخبار...")
+
+    # التحقق مما إذا كان المستخدم أرسل صورة
+    image_bytes = None
+    if message.photo:
+        # جلب أعلى دقة للصورة المرفقة
+        photo_file = await message.photo[-1].get_file()
+        image_bytes = await photo_file.download_as_bytearray()
 
     try:
         market_overview = engine.get_market_overview()
@@ -116,11 +126,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m = engine.get_market_snapshot(specific_symbol, CONFIG["timeframe"])
             specific_data = f"\n[بيانات تفصيلية للعملة المطلوبة {specific_symbol}]:\n- السعر: {m['current_price']}\n- SMA9: {m['fast_ma']} | SMA21: {m['slow_ma']}\n- RSI: {m['rsi']:.1f}\n- الدعم: {m['support_24h']} | المقاومة: {m['resistance_24h']}\n"
     except Exception as e:
-        await update.message.reply_text(f"❌ تعذر جلب البيانات الحية: {e}")
+        await message.reply_text(f"❌ تعذر جلب البيانات الحية: {e}")
         return
 
     prompt = f"""
-أنت مستشار تداول كمي وخبير كريبتو ذكي وودود تسولف مع صديقك وتتناقش معه بحرية تامة وبدون قيود.
+أنت مستشار تداول كمي وخبير كريبتو ذكي وودود تسولف مع صديقك وتتناقش معه بحرية تامة.
 هذه هي بيانات السوق الحية الآن من باينانس:
 {market_overview}
 {specific_data}
@@ -128,21 +138,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 وهذه أحدث عناوين الأخبار المالية:
 {headlines}
 
-رسالة أو سؤال المستخدم: "{user_question}"
+سؤال أو ملاحظة المستخدم مع الصورة: "{user_question}"
 
 تعليمات الرد:
-1. اسولف معه بطريقة طبيعية، ذكية، ومريحة (بدون جمود أو ردود آلية مكررة).
-2. إذا طلب ترشيح عملات أو سأل عن السوق، اقترح عليه أفضل العملات من البيانات أعلاه واشرح له "ليه" اخترتها بناءً على الأرقام الحقيقية.
-3. أعطه نصائح عملية واضحة (أين يدخل، أين يضع وقف الخسارة، وأين الهدف).
+1. إذا أرسل المستخدم صورة (مثل شارت تحليل فني، أو محفظة، أو صفقة)، قم بتحليل ما بداخل الصورة بدقة واربطه ببيانات السوق الحية.
+2. اسولف معه بطريقة طبيعية، ذكية، ومريحة وخالية من الجمود.
+3. أعطه نصائح عملية واضحة (نقاط الدخول، الأهداف، وقف الخسارة).
 4. أجب باللغة العربية.
 """
 
     response = None
+    contents = [prompt]
+    
+    # إذا كانت هناك صورة، نقوم بإضافتها مع الطلب للنموذج
+    if image_bytes:
+        contents.append(
+            types.Part.from_bytes(
+                data=bytes(image_bytes),
+                mime_type="image/jpeg",
+            )
+        )
+
     for model_name in CONFIG["fallback_models"]:
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=prompt
+                contents=contents
             )
             if response and response.text:
                 break
@@ -150,9 +171,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
     if response and response.text:
-        await update.message.reply_text(response.text.strip())
+        await message.reply_text(response.text.strip())
     else:
-        await update.message.reply_text("❌ حدث خطأ: تعذر توليد الرد من النماذج حالياً.")
+        await message.reply_text("❌ حدث خطأ: تعذر توليد الرد من النماذج حالياً.")
 
 
 def main():
@@ -162,9 +183,11 @@ def main():
 
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = ApplicationBuilder().token(CONFIG["telegram_token"]).request(request).build()
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("🤖 بوت تيليجرام يعمل الآن بنجاح ومستعد لاستقبال رسائلك...")
+    # تعديل الـ Filter لكي يستقبل النصوص والصور معاً
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), handle_message))
+    
+    print("🤖 بوت تيليجرام (النصوص والصور) يعمل الآن بنجاح...")
     app.run_polling()
 
 
